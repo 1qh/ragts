@@ -1,0 +1,210 @@
+/* eslint-disable max-depth, max-statements, no-await-in-loop */
+/** biome-ignore-all lint/performance/noAwaitInLoops: x */
+import { CryptoHasher } from 'bun'
+import { eq } from 'drizzle-orm'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+
+import type { DrizzleDb } from './db'
+import type { BackupChunk, BackupDoc, ExportResult, ImportResult, ValidationResult } from './types'
+
+import { chunks, documents } from './schema'
+
+const computeHash = (input: string): string => {
+    const hasher = new CryptoHasher('sha256')
+    hasher.update(input)
+    return hasher.digest('hex')
+  },
+  appendBackupLine = (filePath: string, doc: BackupDoc) => {
+    appendFileSync(filePath, `${JSON.stringify(doc)}\n`)
+  },
+  parseEmbedding = (raw: number[] | string): number[] => {
+    if (Array.isArray(raw)) return raw
+    return JSON.parse(raw) as number[]
+  },
+  exportBackup = async (db: DrizzleDb, outputPath: string): Promise<ExportResult> => {
+    const rows = await db
+      .select({
+        chunkEmbedding: chunks.embedding,
+        chunkEndIndex: chunks.endIndex,
+        chunkStartIndex: chunks.startIndex,
+        chunkText: chunks.text,
+        chunkTokenCount: chunks.tokenCount,
+        content: documents.content,
+        contentHash: documents.contentHash,
+        docId: documents.id,
+        metadata: documents.metadata,
+        title: documents.title
+      })
+      .from(documents)
+      .leftJoin(chunks, eq(chunks.documentId, documents.id))
+      .orderBy(documents.id, chunks.id)
+
+    writeFileSync(outputPath, '')
+
+    const grouped = new Map<
+      number,
+      { chunks: BackupChunk[]; content: string; contentHash: string; metadata: Record<string, unknown>; title: string }
+    >()
+    for (const row of rows) {
+      let entry = grouped.get(row.docId)
+      if (!entry) {
+        entry = {
+          chunks: [],
+          content: row.content,
+          contentHash: row.contentHash,
+          metadata: row.metadata ?? {},
+          title: row.title
+        }
+        grouped.set(row.docId, entry)
+      }
+      if (row.chunkText !== null && row.chunkEmbedding !== null)
+        entry.chunks.push({
+          embedding: parseEmbedding(row.chunkEmbedding),
+          endIndex: row.chunkEndIndex ?? 0,
+          startIndex: row.chunkStartIndex ?? 0,
+          text: row.chunkText,
+          tokenCount: row.chunkTokenCount ?? 0
+        })
+    }
+
+    for (const [, entry] of grouped) appendBackupLine(outputPath, entry)
+
+    return { documentsExported: grouped.size, outputPath }
+  },
+  validateBackupLines = (lines: string[]): ValidationResult => {
+    const errors: string[] = [],
+      dimensions = new Set<number>(),
+      hashes = new Map<string, number>()
+    let totalChunks = 0
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i]
+      if (line)
+        try {
+          const doc = JSON.parse(line) as BackupDoc
+
+          if (!doc.title || typeof doc.title !== 'string') errors.push(`Line ${i + 1}: missing or invalid title`)
+          if (!doc.content || typeof doc.content !== 'string') errors.push(`Line ${i + 1}: missing or invalid content`)
+          if (!doc.contentHash || typeof doc.contentHash !== 'string')
+            errors.push(`Line ${i + 1}: missing or invalid contentHash`)
+          if (!Array.isArray(doc.chunks)) errors.push(`Line ${i + 1}: missing or invalid chunks array`)
+
+          if (Array.isArray(doc.chunks))
+            for (const chunk of doc.chunks) {
+              if (Array.isArray(chunk.embedding)) dimensions.add(chunk.embedding.length)
+              else errors.push(`Line ${i + 1}: chunk missing embedding array`)
+
+              totalChunks += 1
+            }
+
+          const count = hashes.get(doc.contentHash) ?? 0
+          hashes.set(doc.contentHash, count + 1)
+        } catch {
+          errors.push(`Line ${i + 1}: invalid JSON`)
+        }
+    }
+
+    const duplicateHashes: string[] = []
+    for (const [hash, count] of hashes) if (count > 1) duplicateHashes.push(hash)
+
+    return {
+      dimensions,
+      duplicateHashes,
+      errors,
+      totalChunks,
+      totalDocuments: lines.length,
+      valid: errors.length === 0 && dimensions.size <= 1
+    }
+  },
+  validateBackup = (filePath: string): ValidationResult => {
+    const content = readFileSync(filePath, 'utf8'),
+      lines = content.split('\n').filter(l => l.trim().length > 0)
+    return validateBackupLines(lines)
+  },
+  importBackup = async (db: DrizzleDb, filePath: string, dimension?: number): Promise<ImportResult> => {
+    const content = readFileSync(filePath, 'utf8'),
+      lines = content.split('\n').filter(l => l.trim().length > 0),
+      validation = validateBackupLines(lines)
+    if (!validation.valid) {
+      const errorParts: string[] = []
+      if (validation.errors.length > 0) errorParts.push(validation.errors.join('; '))
+      if (validation.dimensions.size > 1)
+        errorParts.push(`inconsistent embedding dimensions: [${[...validation.dimensions].join(', ')}]`)
+      const detail = errorParts.length > 0 ? errorParts.join('; ') : 'invalid backup file'
+      throw new Error(`Backup validation failed: ${detail}`)
+    }
+
+    let documentsImported = 0,
+      chunksInserted = 0,
+      duplicatesSkipped = 0
+    const warnings: string[] = []
+
+    for (const line of lines) {
+      const doc = JSON.parse(line) as BackupDoc
+      let isDimensionMismatch = false
+
+      if (dimension !== undefined && doc.chunks.length > 0) {
+        const [firstChunk] = doc.chunks
+        if (firstChunk && firstChunk.embedding.length !== dimension) {
+          warnings.push(
+            `Document "${doc.title}" has embedding dimension ${firstChunk.embedding.length}, expected ${dimension}`
+          )
+          isDimensionMismatch = true
+        }
+      }
+
+      if (!isDimensionMismatch) {
+        const existing = await db
+          .select({ id: documents.id })
+          .from(documents)
+          .where(eq(documents.contentHash, doc.contentHash))
+          .limit(1)
+
+        if (existing.length > 0) {
+          duplicatesSkipped += 1
+          warnings.push(`Duplicate skipped: "${doc.title}" (hash: ${doc.contentHash.slice(0, 12)}...)`)
+        } else {
+          let insertedChunkCount = 0
+          await db.transaction(async tx => {
+            const [inserted] = await tx
+              .insert(documents)
+              .values({
+                content: doc.content,
+                contentHash: doc.contentHash,
+                metadata: doc.metadata,
+                title: doc.title
+              })
+              .returning({ id: documents.id })
+
+            if (inserted && doc.chunks.length > 0) {
+              const chunkRows: {
+                documentId: number
+                embedding: number[]
+                endIndex: number
+                startIndex: number
+                text: string
+                tokenCount: number
+              }[] = []
+              for (const chunk of doc.chunks)
+                chunkRows.push({
+                  documentId: inserted.id,
+                  embedding: chunk.embedding,
+                  endIndex: chunk.endIndex,
+                  startIndex: chunk.startIndex,
+                  text: chunk.text,
+                  tokenCount: chunk.tokenCount
+                })
+              await tx.insert(chunks).values(chunkRows)
+              insertedChunkCount = chunkRows.length
+            }
+          })
+          chunksInserted += insertedChunkCount
+          documentsImported += 1
+        }
+      }
+    }
+
+    return { chunksInserted, documentsImported, duplicatesSkipped, warnings }
+  }
+
+export { appendBackupLine, computeHash, exportBackup, importBackup, validateBackup }
