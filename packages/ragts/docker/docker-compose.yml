@@ -1,0 +1,14 @@
+services:
+  db:
+    image: timescale/timescaledb-ha:pg18
+    shm_size: 1g
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - 5432:5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  pgdata:

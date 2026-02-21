@@ -1,0 +1,15 @@
+{
+  "name": "@a/demo",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "clean": "git clean -xdf .cache .turbo dist node_modules",
+    "lint": "eslint",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "with-env": "dotenv -e ../../.env --"
+  },
+  "dependencies": {
+    "ragts": "*"
+  }
+}

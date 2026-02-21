@@ -1,0 +1,33 @@
+{
+  "name": "a",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tooling/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "clean": "git clean -xdf node_modules .turbo bun.lock",
+    "clean:workspaces": "turbo run clean",
+    "fix": "sort-package-json **/package.json && oxlint --fix --fix-suggestions --quiet && bun lint:fix -- --quiet && biome check --fix --diagnostic-level=error && bun typecheck && bun run build",
+    "postinstall": "bun lint:ws",
+    "lint": "turbo run lint --continue -- --cache --cache-location .cache/.eslintcache && oxlint --quiet",
+    "lint:fix": "turbo run lint --continue -- --fix --cache --cache-location .cache/.eslintcache",
+    "lint:ws": "sherif",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "latest",
+    "@types/bun": "latest",
+    "depcheck": "latest",
+    "dotenv-cli": "latest",
+    "oxlint": "latest",
+    "sherif": "latest",
+    "sort-package-json": "latest",
+    "ts-unused-exports": "latest",
+    "turbo": "latest",
+    "typescript": "latest"
+  },
+  "packageManager": "bun@1.3.9"
+}
