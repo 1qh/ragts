@@ -1,0 +1,35 @@
+{
+  "name": "a",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tooling/*"
+  ],
+  "scripts": {
+    "build:ts": "turbo run build",
+    "clean": "git clean -xdf node_modules .turbo bun.lock",
+    "clean:workspaces": "turbo run clean",
+    "fix": "bun format && bun lint:ts:fix && bun format && (O=$(turbo typecheck build --output-logs=errors-only 2>&1) || { echo \"$O\"; false; })",
+    "format": "sort-package-json **/package.json > /dev/null && biome check --fix --diagnostic-level=error > /dev/null",
+    "format:check": "sort-package-json --check '**/package.json' && biome ci --diagnostic-level=error",
+    "postinstall": "bun lint:ws",
+    "lint:ts": "turbo run lint --continue -- --cache --cache-location .cache/.eslintcache && oxlint --quiet",
+    "lint:ts:fix": "(O=$(oxlint --fix --fix-suggestions --quiet 2>&1) || { echo \"$O\"; false; }) && (O=$(turbo lint --continue --output-logs=errors-only -- --fix --cache --cache-location .cache/.eslintcache 2>&1) || { echo \"$O\"; false; })",
+    "lint:ws": "sherif",
+    "tsc": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "latest",
+    "@types/bun": "latest",
+    "depcheck": "latest",
+    "dotenv-cli": "latest",
+    "oxlint": "latest",
+    "sherif": "latest",
+    "sort-package-json": "latest",
+    "ts-unused-exports": "latest",
+    "turbo": "latest",
+    "typescript": "latest"
+  },
+  "packageManager": "bun@1.3.9"
+}

@@ -1,0 +1,50 @@
+{
+  "name": "ragts",
+  "version": "0.0.3",
+  "description": "rag",
+  "keywords": [
+    "rag"
+  ],
+  "homepage": "https://github.com/1qh/ragts#readme",
+  "bugs": {
+    "url": "https://github.com/1qh/ragts/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1qh/ragts.git"
+  },
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./utils": "./src/cli-utils.ts"
+  },
+  "bin": {
+    "ragts": "./src/cli.ts"
+  },
+  "files": [
+    "docker/",
+    "src/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "git clean -xdf .cache .turbo dist node_modules",
+    "lint": "eslint",
+    "prepublishOnly": "rm -f ./README.md && cp ../../README.md ./README.md",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "with-env": "dotenv -e ../../.env --"
+  },
+  "dependencies": {
+    "drizzle-orm": "latest",
+    "postgres": "latest"
+  },
+  "devDependencies": {
+    "drizzle-kit": "latest"
+  },
+  "peerDependencies": {
+    "@ai-sdk/openai-compatible": "*",
+    "@ai-sdk/provider": "*",
+    "ai": "*"
+  }
+}
